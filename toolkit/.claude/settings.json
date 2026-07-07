@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__kanbanger__propose_done|mcp__kanbanger__approve_done",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const cp=require('child_process'),p=require('path');const root=process.env.CLAUDE_PROJECT_DIR||process.cwd();const r=cp.spawnSync(process.execPath,[p.join(root,'.claude','hooks','review-gate.cjs')],{stdio:'inherit',timeout:12000});process.exit(r.status==null?2:r.status);\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(gh pr create *)",
+            "command": "node -e \"const cp=require('child_process'),p=require('path');const root=process.env.CLAUDE_PROJECT_DIR||process.cwd();cp.spawnSync(process.execPath,[p.join(root,'.claude','hooks','watch-review-reminder.cjs')],{stdio:'inherit',timeout:8000});process.exit(0);\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

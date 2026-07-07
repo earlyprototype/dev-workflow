@@ -1,0 +1,196 @@
+# Stage 2 — automatic PR review (the delivery contract: review step 2).
+# Comments and review state only: the token can read code but never change it
+# (contents: read). pull-requests: write is needed to post review comments; the
+# prompt forbids edits to files. issues: read lets the verdict-gate step below
+# read back the review comment this job just posted.
+#
+# THE `review` CHECK IS A VERDICT GATE. It does not merely go green when the
+# review RAN — the verdict-gate step below reads this run's review and FAILS this
+# job (and so the required `review` check, and so the merge) when the review's
+# verdict is BLOCK: a CRITICAL, HIGH, or MEDIUM finding. Only LOW and
+# informational notes pass. That is what makes a finding block MECHANICALLY, not
+# just as a posted comment.
+#
+# ONE BOOTSTRAP CASE. claude-code-action self-skips (posting nothing) on any PR
+# whose copy of THIS workflow file differs from the default branch — its guard
+# against a PR rewriting the reviewer that judges it. That fires on the PR that
+# introduces this gate AND on every later PR that edits this file, so no verdict
+# can exist for those runs. The verdict-gate step detects that skip (an empty
+# `execution_file` output) and DEFERS to human ratification instead of failing
+# closed on a bootstrap artifact. A review that actually RAN and stayed silent
+# still fails closed.
+#
+# A SKIP GOES GREEN HERE BUT MUST NOT AUTO-MERGE. Exiting 0 on skip keeps the
+# `review` check green so a human can still merge a review-machinery change — but a
+# green check is NOT proof of a clean review, and must not on its own arm auto-merge.
+# The arming decision lives in `auto-merge.yml`, which reacts to THIS workflow
+# completing (`workflow_run`) and arms only on a genuine PASS verdict, never on a
+# skip. That split — green check for the human, no arm for the machine — is what
+# stops a skipped review from auto-merging unseen.
+#
+# WHY ready_for_review / reopened ARE HERE. `auto-merge.yml` arms only when THIS
+# review completes. Marking a draft ready (or reopening) changes nothing on its own,
+# so without a fresh review run a genuinely-passing readied draft would never arm.
+# These triggers produce that fresh run, so arming re-evaluates at the moment the PR
+# becomes auto-mergeable.
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  # Lets the job prove its identity to GitHub so the connected Claude app can
+  # act on the PR (the action fails without it).
+  id-token: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      # The action needs the repository present in the workspace — it restores
+      # trusted config files from main before reviewing. The checkout also
+      # supplies the bootstrap fallback classifier in the verdict-gate step below.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        id: review
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are the primary reviewer for this pull request
+            (${{ github.repository }}#${{ github.event.pull_request.number }}).
+            Review the diff against the repo's contribution standards
+            (CONTRIBUTING.md). Focus on, in order: correctness bugs, security
+            (auth, user data, credentials, input validation), silent error
+            handling, and scope (does the change stay inside its issue?).
+
+            Label every finding CRITICAL, HIGH, MEDIUM, or LOW. Write
+            findings in plain English for a non-specialist reader: what
+            is wrong, why it matters, and what to do about it.
+
+            A CRITICAL, HIGH, or MEDIUM finding blocks the merge; only
+            LOW does not. So END YOUR REVIEW WITH A SINGLE VERDICT LINE, on
+            its own line, exactly one of:
+                AUTOMERGE_VERDICT: PASS
+                AUTOMERGE_VERDICT: BLOCK
+            Use BLOCK if (and only if) you raised at least one CRITICAL,
+            HIGH, or MEDIUM finding; otherwise use PASS. This line is read mechanically
+            to gate the merge — if it is missing or malformed the merge is
+            blocked by default, so do not omit it and do not restate the
+            format anywhere else in the review.
+
+            Post the review as PR comments. Do not modify any files.
+          # track_progress gives the reviewer a comment on the PR to write into —
+          # without it the review has nowhere to land and the job goes green
+          # having posted nothing. The verdict-gate step reads this same comment.
+          track_progress: true
+          claude_args: |
+            --model claude-opus-4-8
+            --max-turns 30
+
+      # Fail this job — and so the required `review` check — when the review's
+      # verdict is BLOCK (a CRITICAL/HIGH/MEDIUM finding) or cannot be read. This
+      # is the mechanical severity gate; the branch protection ruleset (empty
+      # bypass list) then holds the merge.
+      - name: Enforce the review verdict
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # Empty exactly when the reviewer did NOT run — the in-workflow signal
+          # for the bootstrap-skip case handled in step 0. claude-code-action sets
+          # this output only after a real review; on a workflow-validation skip it
+          # returns first, leaving it blank.
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+        run: |
+          set -o pipefail
+
+          # 0. Did the hosted reviewer actually RUN? (bootstrap / self-skip)
+          #    anthropics/claude-code-action refuses to review — posting NOTHING —
+          #    on any PR whose checked-out copy of THIS workflow file differs from
+          #    the default branch. That is its own guard against a PR rewriting the
+          #    reviewer that judges it, and it fires on the PR that introduces this
+          #    gate AND on every later PR that edits claude-pr-review.yml. When it
+          #    skips it returns before emitting `execution_file`, so an EMPTY
+          #    execution_file is the signal that no review — and so no verdict —
+          #    can exist for this run. Failing closed here would block the
+          #    introducing PR (and every future edit to the review machinery)
+          #    forever on a bootstrap artifact, never on a real finding. This is the
+          #    review-RUN twin of the classifier bootstrap in step 2: a change to
+          #    the reviewing machinery cannot be machine-reviewed, so it defers to
+          #    the human review the action's own skip message points to ("your
+          #    workflow will begin working once you merge your PR"). We do NOT pass a
+          #    review that RAN and stayed silent: that has a NON-empty execution_file
+          #    and is judged in steps 1-2 below, where a missing/BLOCK verdict still
+          #    fails closed.
+          if [ -z "$EXECUTION_FILE" ] || [ ! -f "$EXECUTION_FILE" ]; then
+            echo "The hosted reviewer was skipped by claude-code-action's workflow-validation guard because this PR edits the review workflow itself (${GITHUB_WORKFLOW}); it produced no review to read. The 'review' check goes GREEN so this review-machinery change stays MANUALLY mergeable — but a skip is not a clean verdict, so auto-merge.yml will NOT arm auto-merge on it (it arms only on a genuine PASS). Deferring to manual ratification; the mechanical verdict gate resumes on the next PR that does not touch this workflow."
+            exit 0
+          fi
+
+          # 1. The review ran. Read THIS run's reviewer comment. The claude[bot]
+          #    tracking comment links to /actions/runs/$RUN_ID, so the verdict is
+          #    pinned to exactly this job's review — never a stale earlier run's.
+          #    Poll a few times: the action posts the comment before the step ends,
+          #    but the REST list endpoint can trail the write by a second or two,
+          #    and a single read would fail closed on that timing alone. per_page=100
+          #    (no --paginate) keeps the response a single valid JSON array; a PR
+          #    with >100 issue comments is not a real case here.
+          READ_ATTEMPTS=6       # up to 6 reads
+          READ_SLEEP_SECONDS=10 # spaced 10s apart — bounded (~50s worst case)
+          BODY=""
+          attempt=1
+          while [ "$attempt" -le "$READ_ATTEMPTS" ]; do
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments?per_page=100" \
+              > "$RUNNER_TEMP/pr-comments.json"
+            BODY="$(RUN_ID="$RUN_ID" node -e '
+              const fs = require("fs");
+              const runId = process.env.RUN_ID;
+              const comments = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/pr-comments.json", "utf8"));
+              const mine = comments.filter(c =>
+                c && c.user && c.user.login === "claude[bot]" &&
+                typeof c.body === "string" && c.body.includes("/actions/runs/" + runId));
+              process.stdout.write(mine.length ? mine[mine.length - 1].body : "");
+            ')"
+            [ -n "$BODY" ] && break
+            if [ "$attempt" -lt "$READ_ATTEMPTS" ]; then
+              echo "Reviewer comment for run ${RUN_ID} not readable yet (attempt ${attempt}/${READ_ATTEMPTS}); retrying in ${READ_SLEEP_SECONDS}s..."
+              sleep "$READ_SLEEP_SECONDS"
+            fi
+            attempt=$((attempt + 1))
+          done
+
+          if [ -z "$BODY" ]; then
+            echo "The review ran (execution_file present) but its comment for run ${RUN_ID} never became readable — failing closed. A review whose verdict cannot be read cannot clear a merge."
+            exit 1
+          fi
+
+          # 2. Judge the verdict with the classifier from the TRUSTED BASE branch,
+          #    never the PR's own checkout — a PR must not edit the code that
+          #    decides whether its review blocks the merge (the same base-branch
+          #    reasoning the arming guard uses). Fail closed if the base fetch errors.
+          GUARD="$RUNNER_TEMP/automerge-eligible.cjs"
+          if ! gh api "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/automerge-eligible.cjs?ref=${BASE_REF}" \
+                 -H "Accept: application/vnd.github.raw" > "$GUARD" 2>/dev/null; then
+            echo "Could not fetch the base-branch verdict classifier — failing closed."
+            exit 1
+          fi
+          # Bootstrap ONLY: on the PR that first introduces this verdict classifier,
+          # base has no AUTOMERGE_VERDICT sentinel yet and cannot read a review. For
+          # that single transition, judge with this PR's checked-out copy. Every PR
+          # after this one base-fetches a sentinel-bearing classifier and this branch
+          # is dead.
+          if ! grep -q "AUTOMERGE_VERDICT" "$GUARD"; then
+            echo "Base classifier predates the verdict gate (bootstrap) — using this PR's checked-out classifier for this transition."
+            GUARD=".github/scripts/automerge-eligible.cjs"
+          fi
+
+          # exit 0 = verdict PASS (no CRITICAL/HIGH/MEDIUM); non-zero = BLOCK or no verdict.
+          printf '%s' "$BODY" | node "$GUARD"

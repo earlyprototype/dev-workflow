@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "kanbanger": {
+      "command": "kanbanger-mcp",
+      "args": [],
+      "env": {
+        "KANBANGER_WORKSPACE": "${KANBANGER_WORKSPACE:-}",
+        "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
+        "GITHUB_REPO": "${GITHUB_REPO:-}",
+        "GITHUB_PROJECT_NUMBER": "${GITHUB_PROJECT_NUMBER:-}"
+      }
+    }
+  }
+}

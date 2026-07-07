@@ -1,0 +1,53 @@
+# Stage 1 — CI on every PR (the delivery contract: review step 1).
+# A conventional Node pipeline: lint, typecheck, test (with a coverage floor),
+# build. Adjust the app steps to your stack — the load-bearing part for THIS
+# toolkit is the block of hook/gate tests, which keep the merge-path guards
+# honest: a change that would weaken the review gate, the verdict classifier, or
+# the watch loop fails here, in a required check, before it can merge.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (with coverage floor)
+        run: npm run test:coverage
+
+      # ── The merge-path guards ship with their own tests (plain node:assert, no
+      #    framework — they spawn the hooks against temp git repos and pipe review
+      #    text through the classifier). No app dependency, so they run anywhere.
+      - name: Review-gate hook tests
+        run: node .claude/hooks/tests/review-gate.test.cjs
+
+      - name: Auto-merge eligibility (verdict) tests
+        run: node .github/scripts/automerge-eligible.test.cjs
+
+      - name: Review-watch classifier tests
+        run: node .claude/hooks/tests/watch-review.test.cjs
+
+      - name: Review-watch reminder hook tests
+        run: node .claude/hooks/tests/watch-review-reminder.test.cjs
+
+      - name: Build
+        run: npm run build
