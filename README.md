@@ -8,6 +8,9 @@ be copied into a new repository rather than reconstructed each time.
 Every element here has been used on one production project. Each is treated as a
 candidate until a second, different project has exercised it.
 
+**[▸ Visual overview](https://earlyprototype.github.io/dev-workflow/)** — the
+pipeline, the two contracts, and the toolkit wiring as a single diagrammed page.
+
 ## Two contracts
 
 A change is governed by two independent contracts. They are separated because
