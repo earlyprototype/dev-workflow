@@ -22,8 +22,8 @@ here is not a failure, it is honest scope.
 
 **Revisit if:** the specific condition that would reopen this — a new
 requirement, a tool that closes a gap named above, a real case the decision
-didn't anticipate. A decision with no revisit trigger is one you can't safely
-change later, because nobody will know it's safe to.
+didn't anticipate. A decision with no stated revisit trigger cannot be safely changed later,
+because nothing records the condition under which changing it is correct.
 
 ---
 

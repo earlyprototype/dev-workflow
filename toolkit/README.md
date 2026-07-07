@@ -30,7 +30,7 @@ toolkit/
   and the tracked tree is clean. `/review` runs the review and calls
   `write-review-log.cjs` to stamp that log. The log is keyed by commit sha, so a
   new commit re-blocks until re-reviewed. A doc-only move logs a one-line waiver
-  instead — the hook stays dumb about which is which; that judgment is yours.
+  instead — the hook does not distinguish a review from a waiver, so that distinction is the author's to make.
 
 - **The verdict gate** is three files sharing one classifier. `claude-pr-review.yml`
   runs the hosted reviewer, which ends with `AUTOMERGE_VERDICT: PASS` or `BLOCK`.

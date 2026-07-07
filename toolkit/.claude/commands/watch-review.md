@@ -1,5 +1,5 @@
 ---
-description: Watch a build PR through its review and react — merged, findings to fix, a red check, or a stall — so no PR is left silently waiting
+description: Watch a build PR through its review and report the outcome — merged, findings to fix, a red check, or a stall — so the result is acted on rather than missed
 argument-hint: [PR number | blank to use the current branch's PR]
 ---
 
@@ -18,9 +18,9 @@ when it settles, tells you in plain English what happened and what to do next.
 Right after you open the PR. One writer per branch: watch the PR you just
 opened, from the worktree you opened it in. A PostToolUse hook
 (`watch-review-reminder.cjs`) fires after `gh pr create` succeeds and reminds
-you to run this — the hook cannot watch the PR itself (a hook-spawned process
-has no tracked task to wake the agent), only make sure the step is never
-forgotten.
+you to run this. The hook cannot perform the watch itself — a hook-spawned
+process has no tracked task for the harness to re-invoke — so it triggers the
+agent's own tracked watch instead.
 
 ## How to run it
 

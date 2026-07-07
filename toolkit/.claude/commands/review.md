@@ -32,8 +32,8 @@ before reviewing (do not rely on what the reviewer happens to know):
 ### 2. Run the fresh review
 
 Delegate to a clean-context reviewer so the judgment is independent of the build
-session (this is what makes it *fresh-context* — the builder cannot wave its own
-work through):
+session (this is what makes it *fresh-context*: the reviewer shares none of the
+builder's context and so does not inherit the builder's blind spots):
 
 ```
 Task(subagent_type: "code-reviewer",
@@ -86,7 +86,7 @@ the hook only checks that *some* entry exists for this commit.
 - The log is **worktree-local** (untracked, gitignored) — it lives only where you ran
   `/review`. Run the review and the kanban done-move from the **same** worktree, or
   the gate won't find the log and will block.
-- The hook proves a review was **logged** against this commit — it cannot prove the review
-  was thorough. That residual trust is yours to honour.
+- The hook proves a review was **logged** against this commit; it does not establish that
+  the review was thorough. That remains a matter of reviewer diligence.
 - The hook gates the MCP done-moves; it cannot block a Stop hook that edits the board
   file directly. Running `/review` before clocking out is what closes that.

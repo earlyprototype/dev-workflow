@@ -1,89 +1,84 @@
 # The requirements contract
 
-What must be true, traced to tests. This is the judgment half of the workflow —
-the part no hook can enforce for you, because it's about deciding what to build
-and proving you built all of it. Where the [delivery contract](../delivery-contract/)
-is wiring, this is discipline.
-
-The failure it exists to prevent is the quiet one: a requirement that was in
-scope, silently not built, with nothing to catch it — because tests only test
-the code that exists, not the code that should have existed. Everything below is
-built to make a dropped requirement *visible*.
+What must be true, traced to tests. This half of the workflow is not enforced by
+tooling: it concerns deciding what to build and establishing that all of it was
+built. It exists to prevent a specific failure — a requirement that was in scope
+but never built — which automated tests do not catch, because tests exercise the
+code that exists, not the code that should exist. Each element below makes a
+dropped requirement observable.
 
 ## The pieces
 
 ### 1. A single source of truth
-One authoritative requirements document outranks everything else — every module
-extract, every plan, every "I think we agreed". If it's contested, you change
-*that* document, deliberately, not the interpretation. A change to a requirement
-is a numbered open question resolved before any code, never a quiet
-reinterpretation mid-build.
+One authoritative requirements document outranks every module extract, plan, and
+recollection. A contested requirement is resolved by changing that document
+deliberately — as a numbered open question settled before code — rather than by
+reinterpreting it during a build.
 
 ### 2. A scoped extract per unit of work
-Each unit of work gets its own extract from the source of truth — a per-module
-PRD ([`module-prd-template.md`](module-prd-template.md)):
+Each unit of work has its own extract from the source of truth, a per-module PRD
+([`module-prd-template.md`](module-prd-template.md)):
 
-- **Traceable line by line** back to the source, so anyone can check it neither
-  invented scope nor dropped it.
-- **Verified by someone other than its author** — the person who scoped it is
-  the person least able to see what they left out.
-- **Kept lean.** An extract that sprawls past a page or two stops being read,
-  which makes it worse than none. It's a checklist, not a prose re-description of
-  the whole system.
+- **Traceable line by line** to the source, so a reader can confirm it neither
+  added scope nor dropped it.
+- **Verified by someone other than its author.** An author is unlikely to notice
+  scope they themselves omitted; an independent reader is the check on that.
+- **Short** — one to two pages. The extract functions as a checklist consulted
+  during the build, not a prose restatement of the system.
 
 ### 3. A completeness checklist
-The extract carries a checklist: every deliverable element tied to a requirement,
-as a box. A built element ticks its box; a dropped one shows as an unticked box,
-not a silent gap. This is the whole trick — it turns "did we forget anything?"
-from a judgment call into something you can *see*.
+The extract carries a checklist tying every deliverable element to a requirement,
+as a box. A built element ticks its box; a dropped element remains an unticked
+box. An omission therefore appears as a visible unfilled item rather than as an
+absence, and an unfilled item is detectable on inspection where an absence is
+not.
 
-### 4. Acceptance criteria that seed the tests
+### 4. Acceptance criteria that seed tests
 Each checklist item carries an acceptance criterion, and each criterion seeds a
-test. This makes traceability directional, and the direction matters:
+test. Traceability is directional:
 
 - **Forward (requirement → test) is mandatory and machine-checked.** Every
-  acceptance criterion must have a test that proves it. A green suite then means
-  something specific: nothing in scope was silently dropped.
-- **Backward (code → requirement) is *not* required.** Mechanism — error
-  handling, structure, naming, the plumbing a reasonable person never asked for
-  by name — is free and doesn't need to trace to a requirement. Only *behaviour a
-  reasonable person has a stake in* needs to trace. Demanding a requirement
-  behind every line just manufactures fake requirements to satisfy the check.
+  acceptance criterion has a test that proves it, so a passing suite establishes
+  that nothing in scope was dropped.
+- **Backward (code → requirement) is not required.** Mechanism — error handling,
+  structure, naming — need not trace to a requirement; only behaviour a
+  reasonable person has a stake in does. Requiring a source requirement behind
+  every line produces requirements written to satisfy the check rather than to
+  describe a need.
 
 ## The build loop
 
-Before any code, and then through it: **observe → propose → adversarial review →
-align → build.**
+Before code, and through it: **observe → propose → adversarial review → align →
+build.**
 
 1. **Observe.** Read the contextualisation manifest
-   ([`contextualisation-manifest-template.md`](contextualisation-manifest-template.md))
-   — a reading list scoped to this unit of work, each item marked *read in full*
-   / *held as a constraint* / *consulted only if touched*. Any existing working
+   ([`contextualisation-manifest-template.md`](contextualisation-manifest-template.md)):
+   a reading list scoped to the unit of work, each item marked *read in full* /
+   *held as a constraint* / *consulted only if touched*. Any existing working
    implementation — a prior prototype, a legacy system, a competitor — is
-   **required** reading, not optional: an untested predecessor is exactly where a
-   silent regression hides. Produce a short summary of what was read and what
-   constraints follow — a checkable artifact, not a tick-box claim.
-2. **Propose.** A coverage map (each acceptance criterion → the test that will
-   prove it), a deviations list (what's added beyond the contract, what's cut and
-   why, what's ambiguous), and the one visible behaviour this unit will
+   required reading; an untested predecessor is a common source of silent
+   regressions. The step produces a short written summary of what was read and
+   the constraints that follow, which is the checkable evidence that it occurred.
+2. **Propose.** A coverage map (each acceptance criterion to the test that will
+   prove it), a deviations list (additions beyond the contract, omissions and
+   their reasons, ambiguities), and the single visible behaviour the unit will
    demonstrate end-to-end.
-3. **Adversarial review.** A second, independent reviewer checks two things only:
-   is anything in the contract left uncovered, and is anything in the code a
-   decision dressed up as craft? Its job is to find the gap the author can't see.
-4. **Align.** A human resolves whatever got flagged — a real gap changes the
-   plan; a real ambiguity goes back to the source of truth.
-5. **Build.** Test-first, against the now-complete contract.
+3. **Adversarial review.** A second, independent reviewer checks two things: that
+   nothing in the contract is left uncovered, and that no decision is presented
+   as mere craft. Its purpose is to surface the gap the author did not see.
+4. **Align.** A human resolves what was flagged: a real gap changes the plan; a
+   real ambiguity returns to the source of truth.
+5. **Build.** Test-first, against the completed contract.
 
-## Two gated PRs, not one
-The requirements sign-off ships as its **own PR**, separate from and before the
-implementation PR. The build cannot start until the checklist PR merges. This
-keeps the gate structural rather than optional: no build effort is spent before a
-requirement is approved, and a wrong requirement is caught while it's still cheap
-— a paragraph to fix, not a feature to rewrite.
+## Two gated PRs
+The requirements sign-off is its own PR, separate from and preceding the
+implementation PR, and the build does not start until it merges. Separating them
+means no build effort is spent before a requirement is approved, and a wrong
+requirement is corrected while it is still a paragraph rather than a feature.
 
 ## The unit of delivery
-Deliver **one visible behaviour, built end-to-end and shown working** — not a
-screen with no data behind it, and not a data layer with no screen on top. A
-behaviour a person can watch happen is the thing that's either done or not; "the
-UI" and "the backend", built separately, are each half-done in a way that hides
-the seam where things silently break.
+The unit delivered is one visible behaviour, built end-to-end and shown working —
+not a screen without data behind it, nor a data layer without a screen. A
+behaviour that can be observed is unambiguously done or not done; a UI and a
+backend built separately are each partially complete at the boundary between
+them, where integration failures are least visible.
