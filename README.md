@@ -72,7 +72,7 @@ guard carries its own tests, run in CI.
 | `watch-review.cjs` + `/watch-review` | 6 | Polls the PR, read-only and time-bounded, and returns the review outcome to the agent as one classified result. |
 | `watch-review-reminder.cjs` (PostToolUse hook) | 6 | Fires after `gh pr create` and prompts the agent to start the watch on its own tracked call. The watch cannot run from the hook itself: a hook-spawned process has no tracked task for the harness to re-invoke, so the outcome would have no path back to the agent. |
 
-The stack assumes GitHub, [kanbanger](https://github.com/early-prototype/kanbanger-partymix)
+The stack assumes GitHub, [kanbanger](https://github.com/earlyprototype/kanbanger-partymix)
 as the board, and the Claude GitHub app for the hosted review. It assumes one
 merge authority and no CODEOWNERS; a team adds required reviewers on top.
 
