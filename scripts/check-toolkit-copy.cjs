@@ -74,21 +74,32 @@ function resolveTargetLink(root, link) {
 }
 
 function inspectFile(root, file, parent = '') {
+  const workflow = file.startsWith('.github/workflows/');
   let actual = parent;
   let current = path.join(root, parent);
   try {
     for (const part of file.split('/')) {
+      // current is the expected physical path inside root. A cached child or
+      // a directory checked on the previous iteration may now be a link.
+      if (fs.realpathSync.native(current) !== current) {
+        return { problem: 'path changed during inspection' };
+      }
       const names = fs.readdirSync(current);
       const name = names.includes(part) ? part : names.find(entry => entry.toLowerCase() === part.toLowerCase());
       if (name === undefined) return {};
       actual = path.posix.join(actual, name);
       current = path.join(current, name);
       if (fs.lstatSync(current).isSymbolicLink()) {
+        if (workflow) return { problem: `${actual} is a symbolic link` };
         current = resolveTargetLink(root, current);
         if (!current) return { problem: `${actual} links outside the target` };
       }
     }
     const stat = fs.lstatSync(current, { bigint: true });
+    // Verify that the reported repository path still names the inspected path.
+    if (fs.realpathSync.native(path.join(root, actual)) !== current) {
+      return { problem: 'path changed during inspection' };
+    }
     return stat.isFile() ? { found: actual, stat } : { problem: 'expected a file' };
   } catch {
     return { problem: 'cannot inspect path' };

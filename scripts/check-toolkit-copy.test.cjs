@@ -148,14 +148,76 @@ test('a workflow directory linked outside the target is reported', t => {
   assert.ok(!result.stderr.includes(target), result.stderr);
 });
 
-test('a workflow directory linked within the target passes', t => {
+for (const directory of ['.github', '.github/workflows']) {
+  test(`a link at ${directory} cannot supply repository workflows`, t => {
+    const { target, check } = fixture(t);
+    const source = path.join(target, directory);
+    const inside = path.join(target, 'workflow files');
+    fs.renameSync(source, inside);
+    fs.symlinkSync(inside, source, 'junction');
+    const result = check();
+    for (const name of ['ci.yml', 'auto-merge.yml', 'claude-pr-review.yml']) {
+      expectIncomplete(result, `.github/workflows/${name}: ${directory} is a symbolic link`);
+    }
+  });
+}
+
+test('a link at a workflow filename cannot supply a repository workflow', t => {
   const { target, check } = fixture(t);
-  const github = path.join(target, '.github');
-  const inside = path.join(target, 'workflow files');
-  fs.renameSync(github, inside);
-  fs.symlinkSync(inside, github, 'junction');
+  const workflow = '.github/workflows/ci.yml';
+  const source = path.join(target, workflow);
+  const inside = path.join(target, 'ci.yml');
+  fs.renameSync(source, inside);
+  try {
+    fs.symlinkSync(inside, source, 'file');
+  } catch (err) {
+    if (process.platform !== 'win32' || err.code !== 'EPERM') throw err;
+    // Without file symlink privileges, put a junction at the same workflow path.
+    fs.symlinkSync(inside, source, 'junction');
+  }
   const result = check();
-  assert.equal(result.status, 0, result.stderr);
+  expectIncomplete(result, `${workflow}: ${workflow} is a symbolic link`);
+});
+
+test('the misplaced-file search skips a child replaced after the root listing', t => {
+  const { target, check } = fixture(t, `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const root = fs.realpathSync.native(process.argv[2]);
+    const outside = fs.realpathSync.native(root + ' sibling');
+    const list = fs.readdirSync;
+    fs.readdirSync = (directory, options) => {
+      if (fs.realpathSync.native(directory) === outside) process.exit(94);
+      const entries = list(directory, options);
+      if (directory === root && options?.withFileTypes) {
+        // The initial snapshot predates the junction now on disk.
+        entries.find(entry => entry.name === 'nested').isDirectory = () => true;
+      }
+      return entries;
+    };
+  `);
+  const outside = target + ' sibling';
+  fs.mkdirSync(outside);
+  fs.renameSync(path.join(target, '.mcp.json'), path.join(outside, '.mcp.json'));
+  fs.symlinkSync(outside, path.join(target, 'nested'), 'junction');
+  expectIncomplete(check(), '.mcp.json: missing');
+});
+
+test('a misplaced file that resolves outside the target at reporting time is ignored', t => {
+  const { target, check } = fixture(t, `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const root = fs.realpathSync.native(process.argv[2]);
+    const candidate = path.join(root, 'nested', '.mcp.json');
+    const resolve = fs.realpathSync.native;
+    fs.realpathSync.native = file => file === candidate
+      ? path.join(root + ' sibling', '.mcp.json')
+      : resolve(file);
+  `);
+  const nested = path.join(target, 'nested');
+  fs.mkdirSync(nested);
+  fs.renameSync(path.join(target, '.mcp.json'), path.join(nested, '.mcp.json'));
+  expectIncomplete(check(), '.mcp.json: missing');
 });
 
 test('an external link at a required filename is reported', t => {
