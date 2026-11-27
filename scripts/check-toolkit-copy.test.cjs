@@ -12,6 +12,11 @@ const toolkit = path.resolve(__dirname, '../toolkit');
 const settingsPath = '.claude/settings.json';
 const gatePath = '.claude/hooks/review-gate.cjs';
 const reminderPath = '.claude/hooks/watch-review-reminder.cjs';
+const runtimeHelpers = [
+  '.claude/hooks/lib/watch-review.cjs',
+  '.claude/hooks/lib/write-review-log.cjs',
+  '.github/scripts/automerge-eligible.cjs',
+];
 
 function fixture(t) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'copy check '));
@@ -70,28 +75,88 @@ test('a missing script fails even when its hook is registered', t => {
   expectIncomplete(check(), gatePath);
 });
 
+for (const helper of runtimeHelpers) {
+  test(`a missing runtime helper is reported: ${helper}`, t => {
+    const { target, check } = fixture(t);
+    fs.unlinkSync(path.join(target, helper));
+    expectIncomplete(check(), helper);
+  });
+}
+
 test('an unregistered hook fails even when its script is present', t => {
   const { check, editSettings } = fixture(t);
   editSettings(settings => { delete settings.hooks.PostToolUse; });
   expectIncomplete(check(), settingsPath, 'PostToolUse', reminderPath);
 });
 
-test('a toolkit copied one directory too deep reports expected and actual paths', t => {
+for (const parent of ['toolkit', 'dev-workflow']) {
+  test(`a copy one directory too deep under ${parent} reports expected and actual paths`, t => {
+    const { target, check } = fixture(t);
+    const nested = path.join(target, parent);
+    fs.mkdirSync(nested);
+    for (const name of ['.claude', '.github', '.mcp.json']) {
+      fs.renameSync(path.join(target, name), path.join(nested, name));
+    }
+    const result = check();
+    for (const file of [
+      settingsPath, gatePath, reminderPath, ...runtimeHelpers, '.claude/commands/review.md',
+      '.claude/commands/watch-review.md', '.github/workflows/ci.yml',
+      '.github/workflows/auto-merge.yml', '.github/workflows/claude-pr-review.yml', '.mcp.json',
+    ]) {
+      expectIncomplete(result, `${file}: found at ${parent}/${file}`);
+    }
+    assert.ok(!result.stderr.includes(target), result.stderr);
+  });
+}
+
+for (const [original, renamed, suffix] of [
+  ['.github', '.GitHub', '/workflows/ci.yml'],
+  ['.github/workflows', '.github/Workflows', '/ci.yml'],
+  ['.github/workflows/ci.yml', '.github/workflows/CI.yml', ''],
+]) {
+  test(`case-only rename to ${renamed} reports the spelling on disk`, t => {
+    const { target, check } = fixture(t);
+    fs.renameSync(path.join(target, original), path.join(target, renamed));
+    expectIncomplete(check(), `${original}${suffix}: found at ${renamed}${suffix}`);
+  });
+}
+
+test('a workflow directory linked outside the target is reported', t => {
   const { target, check } = fixture(t);
-  const nested = path.join(target, 'toolkit');
-  fs.mkdirSync(nested);
-  for (const name of ['.claude', '.github', '.mcp.json']) {
-    fs.renameSync(path.join(target, name), path.join(nested, name));
-  }
+  const github = path.join(target, '.github');
+  const outside = target + ' sibling';
+  fs.renameSync(github, outside);
+  fs.symlinkSync(outside, github, 'junction');
   const result = check();
-  for (const file of [
-    settingsPath, gatePath, reminderPath, '.claude/commands/review.md',
-    '.claude/commands/watch-review.md', '.github/workflows/ci.yml',
-    '.github/workflows/auto-merge.yml', '.github/workflows/claude-pr-review.yml', '.mcp.json',
-  ]) {
-    expectIncomplete(result, file, 'toolkit/' + file);
-  }
+  expectIncomplete(result, '.github/workflows/ci.yml', 'outside');
   assert.ok(!result.stderr.includes(target), result.stderr);
+});
+
+test('a workflow directory linked within the target passes', t => {
+  const { target, check } = fixture(t);
+  const github = path.join(target, '.github');
+  const inside = path.join(target, 'workflow files');
+  fs.renameSync(github, inside);
+  fs.symlinkSync(inside, github, 'junction');
+  const result = check();
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('an external link at a required filename is reported', t => {
+  const { target, check } = fixture(t);
+  const config = path.join(target, '.mcp.json');
+  const outside = path.join(path.dirname(target), 'external config');
+  const externalConfig = path.join(outside, '.mcp.json');
+  fs.mkdirSync(outside);
+  fs.renameSync(config, externalConfig);
+  try {
+    fs.symlinkSync(externalConfig, config, 'file');
+  } catch (err) {
+    if (process.platform !== 'win32' || err.code !== 'EPERM') throw err;
+    // A junction exercises the same leaf check on Windows without file symlink privileges.
+    fs.symlinkSync(outside, config, 'junction');
+  }
+  expectIncomplete(check(), '.mcp.json', 'outside');
 });
 
 test('the matcher, condition and command path must belong to the correct registration', t => {

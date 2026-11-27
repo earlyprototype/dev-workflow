@@ -12,8 +12,11 @@ const hookScripts = {
 const requiredFiles = [
   settingsPath,
   ...Object.values(hookScripts),
+  '.claude/hooks/lib/watch-review.cjs',
+  '.claude/hooks/lib/write-review-log.cjs',
   '.claude/commands/review.md',
   '.claude/commands/watch-review.md',
+  '.github/scripts/automerge-eligible.cjs',
   '.github/workflows/ci.yml',
   '.github/workflows/claude-pr-review.yml',
   '.github/workflows/auto-merge.yml',
@@ -43,22 +46,63 @@ function checkRegistrations(target, problems) {
   }
 }
 
+function outsideTarget(root, destination) {
+  const relative = path.relative(root, destination);
+  return path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep);
+}
+
+function resolveTargetLink(root, link) {
+  const destination = path.resolve(path.dirname(link), fs.readlinkSync(link));
+  if (outsideTarget(root, destination)) return null;
+  const resolved = fs.realpathSync.native(link);
+  return outsideTarget(root, resolved) ? null : resolved;
+}
+
+function inspectFile(root, file, parent = '') {
+  let actual = parent;
+  let current = path.join(root, parent);
+  try {
+    for (const part of file.split('/')) {
+      const names = fs.readdirSync(current);
+      const name = names.includes(part) ? part : names.find(entry => entry.toLowerCase() === part.toLowerCase());
+      if (name === undefined) return {};
+      actual = path.posix.join(actual, name);
+      current = path.join(current, name);
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        current = resolveTargetLink(root, current);
+        if (!current) return { problem: `${actual} links outside the target` };
+      }
+    }
+    return fs.statSync(current).isFile() ? { found: actual } : { problem: 'expected a file' };
+  } catch {
+    return { problem: 'cannot inspect path' };
+  }
+}
+
 function checkCopy(target) {
+  let root;
+  let children;
+  try {
+    root = fs.realpathSync.native(target);
+    children = fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory());
+  } catch {
+    return ['.: cannot inspect target directory'];
+  }
+
   const problems = [];
   for (const file of requiredFiles) {
-    try {
-      const stat = fs.statSync(path.join(target, file), { throwIfNoEntry: false });
-      if (stat?.isFile()) {
-        if (file === settingsPath) checkRegistrations(target, problems);
-      } else if (stat) {
-        problems.push(`${file}: expected a file`);
-      } else {
-        const nested = `toolkit/${file}`;
-        const misplaced = fs.statSync(path.join(target, nested), { throwIfNoEntry: false });
-        problems.push(misplaced?.isFile() ? `${file}: found at ${nested}` : `${file}: missing`);
+    let { found, problem } = inspectFile(root, file);
+    if (!found && !problem) {
+      for (const child of children) {
+        found = inspectFile(root, file, child.name).found;
+        if (found) break;
       }
-    } catch {
-      problems.push(`${file}: cannot inspect path`);
+    }
+    if (found === file) {
+      if (file === settingsPath) checkRegistrations(root, problems);
+    } else {
+      const reason = found ? `found at ${found}` : problem ?? 'missing';
+      problems.push(`${file}: ${reason}`);
     }
   }
   return problems;
