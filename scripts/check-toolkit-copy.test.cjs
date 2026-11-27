@@ -148,6 +148,46 @@ test('a workflow directory linked outside the target is reported', t => {
   assert.ok(!result.stderr.includes(target), result.stderr);
 });
 
+test('a link into a case-distinct sibling cannot supply the project settings', t => {
+  const { target, check } = fixture(t, `
+    // A case-insensitive volume cannot create both siblings. Supply the
+    // canonical spelling a case-sensitive Windows directory would return.
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const resolve = fs.realpathSync.native;
+    const root = resolve(process.argv[2]);
+    const sibling = path.join(path.dirname(root), 'Target project');
+    const inside = path.join(root, 'settings copy');
+    if (fs.existsSync(inside)) {
+      fs.realpathSync.native = (...args) => {
+        const result = resolve(...args);
+        return result === inside || result.startsWith(inside + path.sep)
+          ? sibling + result.slice(root.length) : result;
+      };
+    }
+  `);
+  const sibling = path.join(path.dirname(target), 'Target project');
+  if (!fs.existsSync(sibling)) fs.mkdirSync(sibling);
+  const settingsCopy = path.join(sibling, 'settings copy');
+  const claude = path.join(target, '.claude');
+  fs.renameSync(claude, settingsCopy);
+  const alias = path.join(target, 'settings alias');
+  fs.symlinkSync(settingsCopy, alias, 'junction');
+  fs.symlinkSync(alias, claude, 'junction');
+  expectIncomplete(check(), settingsPath + ': .claude links outside the target');
+});
+
+test('a different spelling of the same target in an absolute link is accepted', t => {
+  const { target, check } = fixture(t);
+  const alias = path.join(path.dirname(target), 'Target project');
+  if (!fs.existsSync(alias)) return t.skip('requires a case-insensitive directory');
+  const claude = path.join(target, '.claude');
+  fs.renameSync(claude, path.join(target, 'settings copy'));
+  fs.symlinkSync(path.join(alias, 'settings copy'), claude, 'junction');
+  const result = check();
+  assert.equal(result.status, 0, result.stderr);
+});
+
 for (const directory of ['.github', '.github/workflows']) {
   test(`a link at ${directory} cannot supply repository workflows`, t => {
     const { target, check } = fixture(t);
@@ -189,7 +229,7 @@ test('the misplaced-file search skips a child replaced after the root listing', 
     fs.readdirSync = (directory, options) => {
       if (fs.realpathSync.native(directory) === outside) process.exit(94);
       const entries = list(directory, options);
-      if (directory === root && options?.withFileTypes) {
+      if (fs.realpathSync.native(directory) === root && options?.withFileTypes) {
         // The initial snapshot predates the junction now on disk.
         entries.find(entry => entry.name === 'nested').isDirectory = () => true;
       }
@@ -200,6 +240,38 @@ test('the misplaced-file search skips a child replaced after the root listing', 
   fs.mkdirSync(outside);
   fs.renameSync(path.join(target, '.mcp.json'), path.join(outside, '.mcp.json'));
   fs.symlinkSync(outside, path.join(target, 'nested'), 'junction');
+  expectIncomplete(check(), '.mcp.json: missing');
+});
+
+test('enumeration ignores a candidate replaced after directory validation', t => {
+  const { target, check } = fixture(t, `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const root = fs.realpathSync.native(process.argv[2]);
+    const directory = path.join(root, 'nested');
+    const replacement = root + ' sibling';
+    const resolve = fs.realpathSync.native;
+    const list = fs.readdirSync;
+    let replaced = false;
+    fs.realpathSync.native = file => {
+      if (replaced && (file === directory || file.startsWith(directory + path.sep))) {
+        return replacement + file.slice(directory.length);
+      }
+      const physical = resolve(file);
+      if (physical === directory) replaced = true;
+      return physical;
+    };
+    fs.readdirSync = (file, ...args) => {
+      // The old pathname now addresses another directory. A listing through
+      // that pathname would reach the replacement even if its result is discarded.
+      if (replaced && file === directory) process.exit(94);
+      return list(file, ...args);
+    };
+    process.on('exit', () => { if (!replaced) process.exitCode = 95; });
+  `);
+  const nested = path.join(target, 'nested');
+  fs.mkdirSync(nested);
+  fs.renameSync(path.join(target, '.mcp.json'), path.join(nested, '.mcp.json'));
   expectIncomplete(check(), '.mcp.json: missing');
 });
 

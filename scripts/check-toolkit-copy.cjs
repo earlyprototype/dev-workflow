@@ -62,15 +62,34 @@ function checkRegistrations(target, inspected, problems) {
 }
 
 function outsideTarget(root, destination) {
-  const relative = path.relative(root, destination);
-  return path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep);
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  return destination !== root && !destination.startsWith(prefix);
 }
 
 function resolveTargetLink(root, link) {
   const destination = path.resolve(path.dirname(link), fs.readlinkSync(link));
-  if (outsideTarget(root, destination)) return null;
+  if (outsideTarget(root, destination)) {
+    // Accept an alias differing only in case if that ancestor is this root.
+    const ancestor = destination.slice(0, root.length);
+    if (ancestor.toLowerCase() !== root.toLowerCase() || outsideTarget(ancestor, destination) ||
+        fs.realpathSync.native(ancestor) !== root) return null;
+  }
   const resolved = fs.realpathSync.native(link);
   return outsideTarget(root, resolved) ? null : resolved;
+}
+
+function listPhysicalDirectory(directory, options) {
+  // The CLI is synchronous. On POSIX, "." names the directory held by the
+  // process even if its original pathname changes after this check. On Windows
+  // a junction in the working-directory path can still redirect the listing.
+  const previous = process.cwd();
+  try {
+    process.chdir(directory);
+    if (fs.realpathSync.native('.') !== directory) throw new Error('directory changed');
+    return fs.readdirSync('.', options);
+  } finally {
+    process.chdir(previous);
+  }
 }
 
 function inspectFile(root, file, parent = '') {
@@ -79,12 +98,7 @@ function inspectFile(root, file, parent = '') {
   let current = path.join(root, parent);
   try {
     for (const part of file.split('/')) {
-      // current is the expected physical path inside root. A cached child or
-      // a directory checked on the previous iteration may now be a link.
-      if (fs.realpathSync.native(current) !== current) {
-        return { problem: 'path changed during inspection' };
-      }
-      const names = fs.readdirSync(current);
+      const names = listPhysicalDirectory(current);
       const name = names.includes(part) ? part : names.find(entry => entry.toLowerCase() === part.toLowerCase());
       if (name === undefined) return {};
       actual = path.posix.join(actual, name);
@@ -111,7 +125,7 @@ function checkCopy(target) {
   let children;
   try {
     root = fs.realpathSync.native(target);
-    children = fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory());
+    children = listPhysicalDirectory(root, { withFileTypes: true }).filter(entry => entry.isDirectory());
   } catch {
     return ['.: cannot inspect target directory'];
   }
