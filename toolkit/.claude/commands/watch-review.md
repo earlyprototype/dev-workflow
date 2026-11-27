@@ -45,7 +45,8 @@ When you are re-invoked, read the `WATCH_REVIEW_OUTCOME:` line and act:
 | `blocked` | Review returned BLOCK — the findings are printed inline | Fix every finding, commit, push; the new commit re-runs the review — watch again |
 | `ci-failed` | A required check other than the review went red | Fix the build, push, watch again |
 | `needs-human` | Green, but the review self-skipped (the PR edits review machinery) — auto-merge will not arm | Ask the owner to merge by hand |
-| `clean-pending` (or a timeout) | Green and PASS but not merged inside the window — usually an unresolved conversation | Resolve conversations, or re-run to keep watching |
+| `pending` | A check is missing or running, or the watcher is waiting for a verdict or a confirmed self-skip | At timeout, inspect the review run or re-run the watch |
+| `clean-pending` | Checks passed and the PR is awaiting merge | Check for unresolved conversations or re-run the watch |
 | `closed` | The PR was closed unmerged | Stop; check why with the owner |
 | `draft` | It is a draft, so no review runs | Fix any findings, mark it ready, watch again |
 

@@ -1,11 +1,10 @@
 # The requirements contract
 
-What must be true, traced to tests. This half of the workflow is not enforced by
-tooling: it concerns deciding what to build and establishing that all of it was
-built. It exists to prevent a specific failure — a requirement that was in scope
-but never built — which automated tests do not catch, because tests exercise the
-code that exists, not the code that should exist. Each element below makes a
-dropped requirement observable.
+People decide what to build and verify each scoped extract against the source.
+The forward check connects its acceptance criteria to executable tests.
+The contract helps catch requirements that were in scope but never built.
+Tests can pass while a requirement is missing. Each element below makes that
+omission observable.
 
 ## The pieces
 
@@ -45,6 +44,9 @@ test. Traceability is directional:
   reasonable person has a stake in does. Requiring a source requirement behind
   every line produces requirements written to satisfy the check rather than to
   describe a need.
+
+The [worked example](example/README.md) traces the current-commit review rule
+to a named gate test and includes a command that reports an uncovered criterion.
 
 ## The build loop
 

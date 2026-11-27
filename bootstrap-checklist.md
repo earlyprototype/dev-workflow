@@ -24,7 +24,9 @@ assumes the ones before it. Nothing here is heavy; the point is to wire the gate
    [toolkit README](toolkit/README.md) maps what goes where.
 5. **Install the prerequisites.** kanbanger (or adapt the review-gate matcher to
    your board tool); connect the Claude GitHub app and set the
-   `CLAUDE_CODE_OAUTH_TOKEN` secret; confirm Node runs in CI.
+   `CLAUDE_CODE_OAUTH_TOKEN` secret; confirm Node runs in CI. The copied CI runs
+   all four guard suites immediately. For an npm app, commit its lockfile and
+   set the repository Actions variable `RUN_NPM_CHECKS` to `true`.
 6. **Make `checks` and `review` required.** Add both to the branch ruleset so a
    red CI or a BLOCK verdict actually holds the merge.
 7. **Prove it once.** Open a throwaway PR and watch the gates fire: CI runs the

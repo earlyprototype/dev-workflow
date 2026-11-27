@@ -26,7 +26,7 @@
  *
  * Pure core (unit-tested in .claude/hooks/tests/watch-review.test.cjs):
  *   classify(snapshot)      -> { outcome, action, terminal, summary }
- *   reviewVerdict(body|null) -> 'SKIP' | 'PASS' | 'BLOCK'
+ *   reviewVerdict(body|null) -> 'UNKNOWN' | 'PASS' | 'BLOCK'
  *   exitCodeFor(outcome)    -> 0 (merged) | 1 (anything else)
  * CLI (require.main === module): resolves the PR, polls, classifies, prints a
  *   plain-English result plus a machine line `WATCH_REVIEW_OUTCOME: <outcome>`,
@@ -49,14 +49,11 @@ const MAX_WAIT_MS = Number(process.env.WATCH_REVIEW_MAX_WAIT_MS) || 25 * 60 * 10
 // ─────────────────────────── pure core ───────────────────────────
 
 /**
- * reviewVerdict(commentBody) -> 'SKIP' | 'PASS' | 'BLOCK'
- * A null/undefined body means NO claude[bot] verdict comment exists after the
- * review run completed — i.e. the reviewer self-skipped (a PR that edits the
- * review machinery). A skip is not a pass, so it is its own signal. A present
- * comment is judged by the merge gate's own reader (BLOCK if no clean verdict).
+ * A missing comment gives no verdict. The review job reports a self-skip
+ * separately. The merge gate's reader classifies each available comment.
  */
 function reviewVerdict(commentBody) {
-  if (commentBody == null) return 'SKIP';
+  if (commentBody == null) return 'UNKNOWN';
   return verdictOf(commentBody); // 'PASS' | 'BLOCK'
 }
 
@@ -70,13 +67,14 @@ function mk(outcome, action, terminal, summary) {
  *   state: 'OPEN' | 'MERGED' | 'CLOSED',
  *   isDraft: boolean,
  *   checks: [{ name: string, bucket: 'pass'|'fail'|'pending'|'skipping'|'cancel' }],
- *   reviewVerdict: 'SKIP' | 'PASS' | 'BLOCK',
+ *   reviewVerdict: 'UNKNOWN' | 'SKIP' | 'PASS' | 'BLOCK',
  * }
  * `terminal` = the PR has settled and the agent should act now; false = keep
  * polling. Ordering is deliberate — see the inline notes.
  */
 function classify(s) {
   const checks = Array.isArray(s.checks) ? s.checks : [];
+  const review = checks.find(c => c && c.name === 'review');
   const failed = checks.filter(c => c && c.bucket === 'fail');
   const pending = checks.filter(c => c && c.bucket === 'pending');
   const failedNames = failed.map(c => c.name).join(', ');
@@ -84,7 +82,7 @@ function classify(s) {
   // (e.g. the verdict was unreadable and the gate failed closed) — both mean
   // "the review did not clear this PR", which routes to the findings, not build.
   const reviewFailed = s.reviewVerdict === 'BLOCK'
-    || checks.some(c => c && c.name === 'review' && c.bucket === 'fail');
+    || review?.bucket === 'fail';
 
   // Merged / closed are the true end states — they win over any check snapshot,
   // including a stale one caught mid-merge.
@@ -118,15 +116,22 @@ function classify(s) {
       `A required check failed (not the review): ${failedNames}. Fix it, then ` +
       'commit and push.');
   }
+  if (!review) {
+    return mk('pending', 'keep-watching', false, 'Waiting for the review check to appear or become readable.');
+  }
   if (pending.length) {
     return mk('pending', 'keep-watching', false, 'Checks are still running.');
   }
 
-  // All checks green from here.
+  if (review.bucket !== 'pass') {
+    return mk('pending', 'keep-watching', false, 'Waiting for a successful or failed review check.');
+  }
   if (s.reviewVerdict === 'SKIP') {
     return mk('needs-human', 'ask-human', true,
-      'Checks are green but the review self-skipped (this PR touches the review ' +
-      'machinery), so auto-merge will NOT arm. Ask the owner to merge it by hand.');
+      'The review self-skipped. Ask the owner to review the PR and merge it by hand.');
+  }
+  if (s.reviewVerdict !== 'PASS') {
+    return mk('pending', 'keep-watching', false, 'The review check finished. Waiting for its verdict or a confirmed self-skip.');
   }
   // Green + a genuine PASS, not merged yet: auto-merge should complete shortly —
   // keep watching for the merge. If it never comes, an unresolved conversation is
@@ -185,32 +190,32 @@ function snapshot(pr) {
   const checks = parseJson(
     gh(['pr', 'checks', pr, '--json', 'name,bucket,state,link']).stdout, []);
 
-  // The reviewer's verdict lives in a claude[bot] comment carrying the
-  // AUTOMERGE_VERDICT line. Pin it to THIS review check's run — exactly what
-  // the merge gate itself does (claude-pr-review.yml matches
-  // "/actions/runs/" + RUN_ID) — so a stale comment from an earlier commit's
-  // review, or one posted by a different claude[bot] workflow entirely, can
-  // never be misread as the current verdict. No run-pinned comment yet (still
-  // pending, or the reviewer self-skipped and posted nothing) reads as SKIP,
-  // same as before.
+  // Read the completed check's own run. A running review can still edit its comment.
   const reviewCheck = (Array.isArray(checks) ? checks : []).find(c => c && c.name === 'review');
   const reviewRunMatch = reviewCheck && typeof reviewCheck.link === 'string'
     && reviewCheck.link.match(/\/actions\/runs\/(\d+)/);
   const reviewRunId = reviewRunMatch ? reviewRunMatch[1] : null;
 
-  // A transient failure reading this falls back to [] (parseJson's fallback),
-  // so comment stays null and reviewVerdict reads SKIP — deliberately routed
-  // to the needs-human path (ask the owner) rather than retried, same as a
-  // genuine self-skip. Fail-safe: never a false PASS, just an unnecessary ask.
-  const bodies = parseJson(
-    gh(['api', `repos/{owner}/{repo}/issues/${pr}/comments?per_page=100`,
-      '--jq', '[.[] | select(.user.login=="claude[bot]") | .body]']).stdout, []);
-  const verdictComments = (Array.isArray(bodies) ? bodies : [])
-    .filter(b => typeof b === 'string' && b.includes('AUTOMERGE_VERDICT'));
-  const pinned = reviewRunId
-    ? verdictComments.filter(b => b.includes(`/actions/runs/${reviewRunId}`))
-    : [];
-  const comment = pinned.length ? pinned[pinned.length - 1] : null;
+  let comment = null;
+  let verdict = 'UNKNOWN';
+  if (reviewRunId && ['pass', 'fail'].includes(reviewCheck.bucket)) {
+    const runLink = new RegExp(`/actions/runs/${reviewRunId}(?![0-9])`);
+    const bodies = parseJson(
+      gh(['api', `repos/{owner}/{repo}/issues/${pr}/comments?per_page=100`,
+        '--jq', '[.[] | select(.user.login=="claude[bot]") | .body]']).stdout, []);
+    if (Array.isArray(bodies)) {
+      comment = bodies.findLast(body => typeof body === 'string' &&
+        body.includes('AUTOMERGE_VERDICT') && runLink.test(body)) ?? null;
+    }
+    verdict = reviewVerdict(comment);
+    if (verdict === 'UNKNOWN' && reviewCheck.bucket === 'pass') {
+      const run = parseJson(gh(['run', 'view', reviewRunId, '--json', 'jobs']).stdout, null);
+      const review = run?.jobs?.find(job => job.name === 'review');
+      if (review?.steps?.some(step => step.name === 'Report review self-skip' && step.conclusion === 'success')) {
+        verdict = 'SKIP';
+      }
+    }
+  }
 
   return {
     number: view.number,
@@ -219,7 +224,7 @@ function snapshot(pr) {
     state: view.state,
     isDraft: view.isDraft,
     checks: Array.isArray(checks) ? checks : [],
-    reviewVerdict: reviewVerdict(comment),
+    reviewVerdict: verdict,
     reviewComment: comment,
   };
 }

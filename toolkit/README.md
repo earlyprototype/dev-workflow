@@ -63,6 +63,13 @@ false pass.
 
 ## Verifying
 
+The required `checks` job runs all four guard suites on a toolkit-only install.
+For an npm application, commit its lockfile and set the GitHub Actions repository
+variable `RUN_NPM_CHECKS` to `true`. Set this variable when updating an existing
+npm installation as well. The same job then runs `npm ci` followed by the
+`lint`, `typecheck`, `test:coverage`, and `build` scripts. A missing script
+or a failing command fails the job.
+
 From `toolkit/`, the tests run with no app and no network:
 
 ```bash
@@ -75,3 +82,9 @@ node .claude/hooks/tests/watch-review-reminder.test.cjs
 The workflow files under `.github/workflows/` here are inert: GitHub only runs
 workflows from a repository's *root* `.github/workflows/`, never a nested one, so
 this archive can carry them without them firing on itself.
+
+To verify changes to the templates in this repository, run
+`python -B -m unittest discover -s tests -v` from the repository root.
+The fixtures use Python 3 with PyYAML, Bash, Git, Node 24 and npm. They exercise
+the copied workflow commands, the watcher's polling loop and the traceability
+example offline.
