@@ -56,11 +56,9 @@ const pass = (name) => ({ name, bucket: 'pass' });
 const fail = (name) => ({ name, bucket: 'fail' });
 const pend = (name) => ({ name, bucket: 'pending' });
 
-// ---------- reviewVerdict: SKIP vs PASS vs BLOCK ----------
-// null body = no claude[bot] verdict comment exists AFTER the run completed = the
-// reviewer self-skipped (a PR that edits the review machinery). Never PASS.
-rv('null comment -> SKIP (self-skip)', null, 'SKIP');
-rv('undefined comment -> SKIP', undefined, 'SKIP');
+// The workflow reports a self-skip separately from the comment.
+rv('null comment -> unknown verdict', null, 'UNKNOWN');
+rv('undefined comment -> unknown verdict', undefined, 'UNKNOWN');
 // A present comment is judged by the SAME verdict reader the merge gate uses.
 rv('comment with PASS line -> PASS', 'looks good\n\nAUTOMERGE_VERDICT: PASS', 'PASS');
 rv('comment with BLOCK line -> BLOCK', 'a MEDIUM issue\n\nAUTOMERGE_VERDICT: BLOCK', 'BLOCK');
@@ -92,10 +90,15 @@ cls('a check merely named like "review" does not count as the review check',
   { state: 'OPEN', isDraft: false, checks: [fail('code-review')], reviewVerdict: 'PASS' },
   'ci-failed', 'fix-build', true);
 cls('green + review SKIP -> needs a human (auto-merge will not arm)',
-  { state: 'OPEN', isDraft: false, checks: [pass('CI')], reviewVerdict: 'SKIP' },
+  { state: 'OPEN', isDraft: false, checks: [pass('CI'), pass('review')], reviewVerdict: 'SKIP' },
   'needs-human', 'ask-human', true);
 
 // ---------- non-terminal outcomes: keep watching ----------
+cls('no checks on a new PR', { state: 'OPEN', checks: [] }, 'pending', 'keep-watching', false);
+cls('review running without a verdict', { state: 'OPEN', checks: [pend('review')] },
+  'pending', 'keep-watching', false);
+cls('green check without a confirmed verdict', { state: 'OPEN', checks: [pass('review')] },
+  'pending', 'keep-watching', false);
 cls('checks still pending -> keep watching',
   { state: 'OPEN', isDraft: false, checks: [pend('CI'), pass('review')], reviewVerdict: 'PASS' },
   'pending', 'keep-watching', false);
@@ -115,9 +118,9 @@ cls('merged beats a stale BLOCK',
   'merged', 'advance', true);
 
 // ---------- defensive: missing/odd fields never throw ----------
-cls('missing checks array -> treated as none, green+PASS keeps watching',
+cls('missing checks array -> keep watching for the review check',
   { state: 'OPEN', isDraft: false, reviewVerdict: 'PASS' },
-  'clean-pending', 'keep-watching', false);
+  'pending', 'keep-watching', false);
 
 // ---------- exit-code contract: 0 only when merged ----------
 ec('merged -> exit 0', 'merged', 0);

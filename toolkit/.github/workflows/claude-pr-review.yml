@@ -94,46 +94,25 @@ jobs:
             --model claude-opus-4-8
             --max-turns 30
 
+      # An empty execution_file means the reviewer declined to run. The watcher
+      # reads this step's conclusion to confirm the deferral.
+      - name: Report review self-skip
+        if: steps.review.outputs.execution_file == ''
+        run: echo "The reviewer deferred this PR to a human."
+
       # Fail this job — and so the required `review` check — when the review's
       # verdict is BLOCK (a CRITICAL/HIGH/MEDIUM finding) or cannot be read. This
       # is the mechanical severity gate; the branch protection ruleset (empty
       # bypass list) then holds the merge.
       - name: Enforce the review verdict
+        if: steps.review.outputs.execution_file != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
           RUN_ID: ${{ github.run_id }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-          # Empty exactly when the reviewer did NOT run — the in-workflow signal
-          # for the bootstrap-skip case handled in step 0. claude-code-action sets
-          # this output only after a real review; on a workflow-validation skip it
-          # returns first, leaving it blank.
-          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
         run: |
           set -o pipefail
-
-          # 0. Did the hosted reviewer actually RUN? (bootstrap / self-skip)
-          #    anthropics/claude-code-action refuses to review — posting NOTHING —
-          #    on any PR whose checked-out copy of THIS workflow file differs from
-          #    the default branch. That is its own guard against a PR rewriting the
-          #    reviewer that judges it, and it fires on the PR that introduces this
-          #    gate AND on every later PR that edits claude-pr-review.yml. When it
-          #    skips it returns before emitting `execution_file`, so an EMPTY
-          #    execution_file is the signal that no review — and so no verdict —
-          #    can exist for this run. Failing closed here would block the
-          #    introducing PR (and every future edit to the review machinery)
-          #    forever on a bootstrap artifact, never on a real finding. This is the
-          #    review-RUN twin of the classifier bootstrap in step 2: a change to
-          #    the reviewing machinery cannot be machine-reviewed, so it defers to
-          #    the human review the action's own skip message points to ("your
-          #    workflow will begin working once you merge your PR"). We do NOT pass a
-          #    review that RAN and stayed silent: that has a NON-empty execution_file
-          #    and is judged in steps 1-2 below, where a missing/BLOCK verdict still
-          #    fails closed.
-          if [ -z "$EXECUTION_FILE" ] || [ ! -f "$EXECUTION_FILE" ]; then
-            echo "The hosted reviewer was skipped by claude-code-action's workflow-validation guard because this PR edits the review workflow itself (${GITHUB_WORKFLOW}); it produced no review to read. The 'review' check goes GREEN so this review-machinery change stays MANUALLY mergeable — but a skip is not a clean verdict, so auto-merge.yml will NOT arm auto-merge on it (it arms only on a genuine PASS). Deferring to manual ratification; the mechanical verdict gate resumes on the next PR that does not touch this workflow."
-            exit 0
-          fi
 
           # 1. The review ran. Read THIS run's reviewer comment. The claude[bot]
           #    tracking comment links to /actions/runs/$RUN_ID, so the verdict is
@@ -156,7 +135,7 @@ jobs:
               const comments = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/pr-comments.json", "utf8"));
               const mine = comments.filter(c =>
                 c && c.user && c.user.login === "claude[bot]" &&
-                typeof c.body === "string" && c.body.includes("/actions/runs/" + runId));
+                typeof c.body === "string" && new RegExp("/actions/runs/" + runId + "(?![0-9])").test(c.body));
               process.stdout.write(mine.length ? mine[mine.length - 1].body : "");
             ')"
             [ -n "$BODY" ] && break

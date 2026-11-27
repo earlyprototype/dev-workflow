@@ -37,6 +37,8 @@ without a test.
 | Given …, when …, then … | R1 | <test name / file> |
 | … | R2 | … |
 
+See the [worked example](example/README.md) for a filled row and its executable check.
+
 ## Explicitly out of scope
 What a reader might expect here but that belongs elsewhere — named, so its
 absence is a decision, not an oversight.
