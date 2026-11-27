@@ -14,22 +14,37 @@ const requiredFiles = [
   ...Object.values(hookScripts),
   '.claude/hooks/lib/watch-review.cjs',
   '.claude/hooks/lib/write-review-log.cjs',
+  '.claude/hooks/tests/review-gate.test.cjs',
+  '.claude/hooks/tests/watch-review.test.cjs',
+  '.claude/hooks/tests/watch-review-reminder.test.cjs',
   '.claude/commands/review.md',
   '.claude/commands/watch-review.md',
   '.github/scripts/automerge-eligible.cjs',
+  '.github/scripts/automerge-eligible.test.cjs',
   '.github/workflows/ci.yml',
   '.github/workflows/claude-pr-review.yml',
   '.github/workflows/auto-merge.yml',
   '.mcp.json',
 ];
 
-function checkRegistrations(target, problems) {
+function checkRegistrations(target, inspected, problems) {
+  const file = path.join(target, settingsPath);
   let settings;
+  let fd;
   try {
-    settings = JSON.parse(fs.readFileSync(path.join(target, settingsPath), 'utf8'));
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    const opened = fs.fstatSync(fd, { bigint: true });
+    if (!opened.isFile() || opened.dev !== inspected.dev || opened.ino !== inspected.ino ||
+        outsideTarget(target, fs.realpathSync.native(file))) {
+      problems.push(`${settingsPath}: file changed during inspection`);
+      return;
+    }
+    settings = JSON.parse(fs.readFileSync(fd, 'utf8'));
   } catch (err) {
     problems.push(`${settingsPath}: ${err instanceof SyntaxError ? 'invalid JSON' : 'cannot read file'}`);
     return;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
 
   for (const [event, script] of Object.entries(hookScripts)) {
@@ -73,7 +88,8 @@ function inspectFile(root, file, parent = '') {
         if (!current) return { problem: `${actual} links outside the target` };
       }
     }
-    return fs.statSync(current).isFile() ? { found: actual } : { problem: 'expected a file' };
+    const stat = fs.lstatSync(current, { bigint: true });
+    return stat.isFile() ? { found: actual, stat } : { problem: 'expected a file' };
   } catch {
     return { problem: 'cannot inspect path' };
   }
@@ -91,7 +107,7 @@ function checkCopy(target) {
 
   const problems = [];
   for (const file of requiredFiles) {
-    let { found, problem } = inspectFile(root, file);
+    let { found, problem, stat } = inspectFile(root, file);
     if (!found && !problem) {
       for (const child of children) {
         found = inspectFile(root, file, child.name).found;
@@ -99,7 +115,7 @@ function checkCopy(target) {
       }
     }
     if (found === file) {
-      if (file === settingsPath) checkRegistrations(root, problems);
+      if (file === settingsPath) checkRegistrations(root, stat, problems);
     } else {
       const reason = found ? `found at ${found}` : problem ?? 'missing';
       problems.push(`${file}: ${reason}`);

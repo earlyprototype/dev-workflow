@@ -17,8 +17,14 @@ const runtimeHelpers = [
   '.claude/hooks/lib/write-review-log.cjs',
   '.github/scripts/automerge-eligible.cjs',
 ];
+const ciTests = [
+  '.claude/hooks/tests/review-gate.test.cjs',
+  '.claude/hooks/tests/watch-review.test.cjs',
+  '.claude/hooks/tests/watch-review-reminder.test.cjs',
+  '.github/scripts/automerge-eligible.test.cjs',
+];
 
-function fixture(t) {
+function fixture(t, preload = '') {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'copy check '));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const target = path.join(temp, 'target project');
@@ -29,7 +35,7 @@ function fixture(t) {
   // Run the CLI with filesystem writes and child processes denied. Catch a
   // direct network call or an imported target hook even if its caller recovers.
   const offline = path.join(cwd, 'offline.cjs');
-  fs.writeFileSync(offline, "require('node:net').Socket.prototype.connect = globalThis.fetch = () => process.exit(90);");
+  fs.writeFileSync(offline, "require('node:net').Socket.prototype.connect = globalThis.fetch = () => process.exit(90);\n" + preload);
   function run(...args) {
     const result = spawnSync(process.execPath, [
       '--permission', '--allow-fs-read=*', '--require', offline, checker, ...args,
@@ -83,6 +89,16 @@ for (const helper of runtimeHelpers) {
   });
 }
 
+for (const file of ciTests) {
+  test(`a missing CI test script is reported: ${file}`, t => {
+    const { target, check } = fixture(t);
+    fs.unlinkSync(path.join(target, file));
+    const result = check();
+    expectIncomplete(result, `${file}: missing`);
+    assert.equal(result.stdout, '');
+  });
+}
+
 test('an unregistered hook fails even when its script is present', t => {
   const { check, editSettings } = fixture(t);
   editSettings(settings => { delete settings.hooks.PostToolUse; });
@@ -99,7 +115,7 @@ for (const parent of ['toolkit', 'dev-workflow']) {
     }
     const result = check();
     for (const file of [
-      settingsPath, gatePath, reminderPath, ...runtimeHelpers, '.claude/commands/review.md',
+      settingsPath, gatePath, reminderPath, ...runtimeHelpers, ...ciTests, '.claude/commands/review.md',
       '.claude/commands/watch-review.md', '.github/workflows/ci.yml',
       '.github/workflows/auto-merge.yml', '.github/workflows/claude-pr-review.yml', '.mcp.json',
     ]) {
@@ -157,6 +173,43 @@ test('an external link at a required filename is reported', t => {
     fs.symlinkSync(outside, config, 'junction');
   }
   expectIncomplete(check(), '.mcp.json', 'outside');
+});
+
+test('settings in a linked project directory are read from the verified handle', t => {
+  const { target, check } = fixture(t, `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const root = path.resolve(process.argv[2]);
+    const read = fs.readFileSync;
+    fs.readFileSync = (file, ...args) => {
+      if (typeof file === 'string' && path.resolve(file).startsWith(root + path.sep)) process.exit(93);
+      return read(file, ...args);
+    };
+  `);
+  const claude = path.join(target, '.claude');
+  const inside = path.join(target, 'project settings');
+  fs.renameSync(claude, inside);
+  fs.symlinkSync(inside, claude, 'junction');
+  const result = check();
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('a settings handle with a changed identity is rejected before reading', t => {
+  const { check } = fixture(t, `
+    const fs = require('node:fs');
+    const fstat = fs.fstatSync;
+    fs.fstatSync = (...args) => {
+      const stat = fstat(...args);
+      stat.ino++;
+      return stat;
+    };
+    const read = fs.readFileSync;
+    fs.readFileSync = (file, ...args) => {
+      if (typeof file === 'number') process.exit(93);
+      return read(file, ...args);
+    };
+  `);
+  expectIncomplete(check(), settingsPath, 'changed');
 });
 
 test('the matcher, condition and command path must belong to the correct registration', t => {

@@ -30,10 +30,11 @@ assumes the ones before it. Nothing here is heavy; the point is to wire the gate
 
    The offline check reads the target and compares the two hook registrations
    with the shipped settings. It accepts additional project hooks and settings.
-   It checks the hook scripts, slash commands, workflows, their runtime helpers
-   and the root `.mcp.json`. Paths must match the shipped spelling and resolve
-   inside the target. The checker exits nonzero for an incomplete copy and
-   reports target-relative paths, including files found one directory too deep.
+   It checks the hook scripts, slash commands, workflows, runtime helpers,
+   CI test scripts and the root `.mcp.json`. Paths must match the shipped
+   spelling and resolve inside the target. The checker exits nonzero for an
+   incomplete copy and reports target-relative paths, including files found
+   one directory too deep.
 5. **Install the prerequisites.** kanbanger (or adapt the review-gate matcher to
    your board tool); connect the Claude GitHub app and set the
    `CLAUDE_CODE_OAUTH_TOKEN` secret; confirm Node runs in CI.
