@@ -21,7 +21,18 @@ assumes the ones before it. Nothing here is heavy; the point is to wire the gate
 
 4. **Copy the toolkit in.** From [`toolkit/`](toolkit/): `.claude/` and
    `.github/` into your repo at the same paths, and `.mcp.json` to the root. The
-   [toolkit README](toolkit/README.md) maps what goes where.
+   [toolkit README](toolkit/README.md) maps what goes where. After copying, use
+   the checker from your dev-workflow checkout and pass the target project directory.
+
+   ```sh
+   node "/path/to/dev-workflow/scripts/check-toolkit-copy.cjs" "/path/to/target project"
+   ```
+
+   The offline check reads the target and compares the two hook registrations
+   with the shipped settings. It accepts additional project hooks and settings.
+   It also checks for the hook scripts, slash commands, workflows and root
+   `.mcp.json`. It reports problems by target-relative path and exits nonzero
+   for an incomplete copy.
 5. **Install the prerequisites.** kanbanger (or adapt the review-gate matcher to
    your board tool); connect the Claude GitHub app and set the
    `CLAUDE_CODE_OAUTH_TOKEN` secret; confirm Node runs in CI.
